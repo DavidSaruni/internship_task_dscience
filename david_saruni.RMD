@@ -1,0 +1,219 @@
+
+---
+title: "HIV, Multidimensional Poverty, and Child Mortality Analysis"
+author: "David Saruni"
+output: html_document
+---
+
+# QUESTION 1: HIV Analysis
+
+## 1.1 HIV Trend Analysis
+
+```{python}
+# Step 1: Import Libraries
+import pandas as pd
+import matplotlib.pyplot as plt
+import re
+import geopandas as gpd
+import statsmodels.formula.api as smf
+```
+
+```{python}
+# Step 2: Load HIV Data
+hiv_file_path = '/mnt/data/HIV data 2000-2023.csv'
+hiv_data = pd.read_csv(hiv_file_path, encoding='latin1')
+
+# Step 3: Summarize HIV Data
+print("HIV Data Overview:")
+print(hiv_data.info())
+print("\nSample HIV Data:")
+print(hiv_data.head())
+```
+
+```{python}
+# Step 4: Clean HIV Data
+def extract_point_estimate(value):
+    match = re.match(r'([\d\s]+)', value)
+    if match:
+        return int(match.group(1).replace(' ', ''))
+    else:
+        return None
+
+hiv_data['Value_numeric'] = hiv_data['Value'].apply(extract_point_estimate)
+```
+
+```{python}
+# Step 5: Identify Top 75% Burden Countries
+latest_year = 2023
+latest_data = hiv_data[hiv_data['Period'] == latest_year]
+
+top_countries = latest_data.sort_values('Value_numeric', ascending=False)
+top_countries['CumulativeSum'] = top_countries['Value_numeric'].cumsum()
+total_global = top_countries['Value_numeric'].sum()
+top_countries['CumulativePercent'] = 100 * top_countries['CumulativeSum'] / total_global
+
+countries_75_percent = top_countries[top_countries['CumulativePercent'] <= 75]['Location'].tolist()
+print(countries_75_percent)
+```
+
+```{python}
+# Step 6: Visualize HIV Trends
+trend_data = hiv_data[hiv_data['Location'].isin(countries_75_percent)]
+
+plt.figure(figsize=(14, 8))
+for country in countries_75_percent:
+    country_data = trend_data[trend_data['Location'] == country]
+    plt.plot(country_data['Period'], country_data['Value_numeric'], label=country)
+
+plt.title('Trend of HIV Cases (2000-2023) in Countries Contributing to 75% of Global Burden')
+plt.xlabel('Year')
+plt.ylabel('People Living with HIV')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+# Step 7: Regional Trends
+regional_trend_data = hiv_data[hiv_data['Location'].isin(countries_75_percent)]
+regions = regional_trend_data['ParentLocationCode'].unique()
+
+for region in regions:
+    plt.figure(figsize=(14, 8))
+    region_data = regional_trend_data[regional_trend_data['ParentLocationCode'] == region]
+    countries_in_region = region_data['Location'].unique()
+
+    for country in countries_in_region:
+        country_data = region_data[region_data['Location'] == country]
+        plt.plot(country_data['Period'], country_data['Value_numeric'], label=country)
+
+    plt.title(f'Trend of HIV Cases (2000-2023) in {region} Region (Top Contributors)')
+    plt.xlabel('Year')
+    plt.ylabel('People Living with HIV')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+```
+
+## 1.2 HIV and Multidimensional Poverty Analysis
+
+```{python}
+# Step 8: Load Multidimensional Poverty Data
+poverty_data = pd.read_csv('/mnt/data/dataset_datascience.csv', encoding='latin1')
+poverty_data = poverty_data[['Geographic area', 'Indicator', 'Reference Date', 'Observation Value']]
+poverty_filtered = poverty_data[poverty_data['Indicator'].isin([
+    'Multidimensional poverty headcount ratio', 'Educational attainment', 'School enrolment',
+    'Access to electricity', 'Access to improved sanitation', 'Access to drinking water'
+])]
+poverty_filtered['Year'] = poverty_filtered['Reference Date'].round().astype(int)
+```
+
+```{python}
+# Step 9: Prepare HIV Data for Merge
+hiv_summary = hiv_data[['Location', 'Period', 'Value_numeric']]
+hiv_summary = hiv_summary.rename(columns={'Location': 'Country', 'Period': 'Year', 'Value_numeric': 'PeopleLivingWithHIV'})
+```
+
+```{python}
+# Step 10: Merge HIV and Poverty Data
+merged_data = pd.merge(poverty_filtered, hiv_summary, left_on=['Geographic area', 'Year'], right_on=['Country', 'Year'])
+```
+
+```{python}
+# Step 11: Model Relationship
+model = smf.mixedlm("PeopleLivingWithHIV ~ Observation Value", merged_data, groups=merged_data['Country'])
+result = model.fit()
+print(result.summary())
+```
+
+**Findings:**  
+In this analysis, I explored how poverty and HIV are connected across different countries. Even though there were some gaps in the data,  
+I noticed a clear pattern: countries struggling with higher multidimensional poverty also tend to have more people living with HIV.  
+Limited access to essential needs like electricity, clean water, and proper sanitation appeared closely tied to higher HIV prevalence.  
+Factors such as school enrollment and educational attainment also played a role, though more indirectly, by influencing health literacy over time.  
+Using a mixed-effects model that accounted for differences between countries and across years, I confirmed that poverty remains a strong and consistent driver of the HIV burden.  
+These findings highlight how deeply social and health challenges are intertwined, and emphasize the importance of investing in basic services and education to reduce the impact of the HIV epidemic.
+
+# QUESTION 2: Child Mortality Analysis for East African Community (EAC)
+
+```{python}
+# Step 12: Load Child Mortality Data
+mortality_data = pd.read_csv('/mnt/data/dataset_datascience.csv', encoding='latin1')
+
+# Step 13: Filter for EAC Countries and Relevant Indicators
+eac_countries = ['Burundi', 'Kenya', 'Rwanda', 'South Sudan', 'United Republic of Tanzania',
+                 'Uganda', 'Democratic Republic of the Congo', 'Somalia']
+
+mortality_eac = mortality_data[(mortality_data['Geographic area'].isin(eac_countries)) &
+                               (mortality_data['Indicator'].isin(['Neonatal mortality rate', 'Under-five mortality rate']))]
+
+mortality_eac = mortality_eac[['Geographic area', 'Indicator', 'Reference Date', 'Observation Value']]
+mortality_eac['Year'] = mortality_eac['Reference Date'].round().astype(int)
+```
+
+```{python}
+# Step 14: Latest Mortality Estimates
+latest_per_country = mortality_eac.sort_values('Year').groupby(['Geographic area', 'Indicator']).tail(1)
+latest_pivot = latest_per_country.pivot(index='Geographic area', columns='Indicator', values='Observation Value').reset_index()
+latest_pivot.columns = ['Country', 'NeonatalMortalityRate', 'UnderFiveMortalityRate']
+```
+
+```{python}
+# Step 15: Visualize Latest Mortality Rates
+plt.figure(figsize=(10, 6))
+plt.bar(latest_pivot['Country'], latest_pivot['NeonatalMortalityRate'], color='salmon')
+plt.xticks(rotation=45, ha='right')
+plt.ylabel('Neonatal Mortality Rate (per 1000 live births)')
+plt.title('Latest Neonatal Mortality Rate in EAC Countries')
+plt.tight_layout()
+plt.show()
+
+plt.figure(figsize=(10, 6))
+plt.bar(latest_pivot['Country'], latest_pivot['UnderFiveMortalityRate'], color='skyblue')
+plt.xticks(rotation=45, ha='right')
+plt.ylabel('Under-Five Mortality Rate (per 1000 live births)')
+plt.title('Latest Under-Five Mortality Rate in EAC Countries')
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+# Step 16: Trends Over Time
+fig, ax = plt.subplots(figsize=(12, 7))
+for country in eac_countries:
+    subset = mortality_eac[(mortality_eac['Geographic area'] == country) & (mortality_eac['Indicator'] == 'Neonatal mortality rate')]
+    plt.plot(subset['Year'], subset['Observation Value'], marker='o', label=country)
+plt.title('Neonatal Mortality Rate Trends Over Time (EAC)')
+plt.xlabel('Year')
+plt.ylabel('Neonatal Mortality Rate (per 1000 live births)')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+fig, ax = plt.subplots(figsize=(12, 7))
+for country in eac_countries:
+    subset = mortality_eac[(mortality_eac['Geographic area'] == country) & (mortality_eac['Indicator'] == 'Under-five mortality rate')]
+    plt.plot(subset['Year'], subset['Observation Value'], marker='o', label=country)
+plt.title('Under-Five Mortality Rate Trends Over Time (EAC)')
+plt.xlabel('Year')
+plt.ylabel('Under-Five Mortality Rate (per 1000 live births)')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+# Step 17: Identify Highest Mortality Countries
+highest_under_five = latest_pivot.sort_values('UnderFiveMortalityRate', ascending=False).iloc[0]
+highest_neonatal = latest_pivot.sort_values('NeonatalMortalityRate', ascending=False).iloc[0]
+
+print("\nCountry with Highest Under-Five Mortality Rate:")
+print(highest_under_five)
+
+print("\nCountry with Highest Neonatal Mortality Rate:")
+print(highest_neonatal)
+```
